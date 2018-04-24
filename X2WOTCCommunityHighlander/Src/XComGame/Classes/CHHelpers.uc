@@ -1,5 +1,16 @@
 class CHHelpers extends Object config(Game);
 
+//issue #188 - creating a struct and usable array for modders
+struct TeamRequest
+{
+	var name XGAIPlayerUsed; //when eTeam_One or eTeam_Two is requested to be activated by a mod, we need to assign a XGAIPlayer class to that player state made for the team
+	var ETeam Team; //eTeam_One and eTeam_Two should be the only ones here.
+	var bool AlertsAreVerified; 
+};
+
+var config array<TeamRequest> ModAddedTeams;
+//end issue #188
+
 var config int SPAWN_EXTRA_TILE; // Issue #18 - Add extra ini config
 var config int MAX_TACTICAL_AUTOSAVES; // Issue #53 - make configurable, only use if over 0
 
@@ -43,6 +54,29 @@ var config array<name> AbilityTemplatePerksToLoad;
 var config array<name> ClassesExcludedFromResHQ;
 //end issue #113
 
+// Start Issue #186
+// This is a performance improvement, so we want the default setting to actually change the game behavior
+// This change shouldn't break anything, but the logic is so tightly interfaced with native code I want to provide
+// an easy opt-out in case it breaks anything, especially in combination with mods that relied on quirky behavior.
+// If it turns out that this setting has any noticable effects with Materials, that should be considered a separate issue
+// and fixed before touching this again.
+var config bool UPDATE_MATERIALS_CONSTANTLY;
+// End Issue #186
+
+// Start Issue #155
+// In the base game, XComGameState_Unit doesn't care about sliders all that much. However, the fix to
+// handle sliders correctly has one problem -- mods may add part types for a specific armor and assign
+// it a DLC Name. If those parts are the only valid ones, but the roll fails, we have invisible parts.
+// Hence, we allow DLCNames to be specified here that are excluded by the chance roll and are always
+// valid, effectively making them "vanilla" parts (parts without a DLCName)
+var config array<name> CosmeticDLCNamesUnaffectedByRoll;
+// End Issue #155
+
+// Start Issue #171
+var config bool GrenadeRespectUniqueRule;
+var config bool AmmoSlotBypassUniqueRule;
+// End Issue #171
+
 // Start Issue #123
 simulated static function RebuildPerkContentCache() {
 	local XComContentManager		Content;
@@ -55,6 +89,68 @@ simulated static function RebuildPerkContentCache() {
 	}
 }
 // End Issue #123
+
+//start issue #188 - functions for checking the config array
+static function bool TeamOneRequired()
+{
+	local TeamRequest CheckedRequest;
+	
+	foreach default.ModAddedTeams(CheckedRequest)
+	{
+		if(CheckedRequest.Team == eTeam_One){
+			return true;
+		}
+	}
+	
+	return false;
+}
+
+static function bool TeamTwoRequired()
+{
+	local TeamRequest CheckedRequest;
+	
+	foreach default.ModAddedTeams(CheckedRequest)
+	{
+		if(CheckedRequest.Team == eTeam_Two){
+			return true;
+		}
+	}
+	
+	return false;
+}
+
+static function XGAIPlayer GetTeamOnePlayer()
+{
+	local XComGameState_Player PlayerState;
+
+	foreach `XCOMHISTORY.IterateByClassType(class'XComGameState_Player', PlayerState, eReturnType_Reference)
+	{
+		if( PlayerState.TeamFlag == eTeam_One)
+		{
+			break;
+		}
+	}
+
+	return PlayerState.TeamFlag == eTeam_One ? XGAIPlayer(PlayerState.GetVisualizer()) : none;
+
+}
+
+static function XGAIPlayer GetTeamTwoPlayer()
+{
+	local XComGameState_Player PlayerState;
+
+	foreach `XCOMHISTORY.IterateByClassType(class'XComGameState_Player', PlayerState, eReturnType_Reference)
+	{
+		if( PlayerState.TeamFlag == eTeam_Two)
+		{
+			break;
+		}
+	}
+
+	return PlayerState.TeamFlag == eTeam_Two ? XGAIPlayer(PlayerState.GetVisualizer()) : none;
+
+}
+//end issue #188
 
 //start issue #155
 static function array<name> GetAcceptablePartPacks()
@@ -76,19 +172,24 @@ static function array<name> GetAcceptablePartPacks()
 	for(PartPackIndex = 0; PartPackIndex < PartPackNames.Length; ++PartPackIndex)
 	{
 		bHasSetting = false;
-		for(Index = 0; Index < ProfileSettings.Data.PartPackPresets.Length; ++Index)
+		if (default.CosmeticDLCNamesUnaffectedByRoll.Find(PartPackNames[PartPackIndex]) != INDEX_NONE)
 		{
-			if(ProfileSettings.Data.PartPackPresets[Index].PartPackName == PartPackNames[PartPackIndex])
+			bHasSetting = true;
+			DLCNames.AddItem(PartPackNames[PartPackIndex]);
+		}
+		else
+		{
+			for(Index = 0; Index < ProfileSettings.Data.PartPackPresets.Length; ++Index)
 			{
-				bHasSetting = true;
-				if (
-					`SYNC_FRAND_STATIC() <= ProfileSettings.Data.PartPackPresets[Index].ChanceToSelect &&
-					ProfileSettings.Data.PartPackPresets[Index].ChanceToSelect > 0.02f
-					//0.02 so sliders being set to the minimum actually do something
-				)
+				if(ProfileSettings.Data.PartPackPresets[Index].PartPackName == PartPackNames[PartPackIndex])
 				{
-					DLCNames.AddItem(ProfileSettings.Data.PartPackPresets[Index].PartPackName);
-					break;
+					bHasSetting = true;
+					if (`SYNC_FRAND_STATIC() <= ProfileSettings.Data.PartPackPresets[Index].ChanceToSelect &&
+						ProfileSettings.Data.PartPackPresets[Index].ChanceToSelect > 0.02f) //0.02 so sliders being set to the minimum actually do something
+					{
+						DLCNames.AddItem(ProfileSettings.Data.PartPackPresets[Index].PartPackName);
+						break;
+					}
 				}
 			}
 		}

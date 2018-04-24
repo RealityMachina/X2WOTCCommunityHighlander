@@ -92,6 +92,7 @@ enum EInventorySlot
 	eInvSlot_AugmentationArms,
 	eInvSlot_AugmentationLegs,
 	eInvSlot_CombatDrugs,
+	eInvSlot_Decorations,
 
 	// Marker slot, don't use
 	eInvSlot_END_TEMPLATED_SLOTS,
@@ -1117,9 +1118,12 @@ static function bool InventorySlotBypassesUniqueRule(EInventorySlot Slot)
 {
 	switch(Slot)
 	{
+	// Start Issue #171 - Allow ammo and grenade unique rule to be modified
 	case eInvSlot_AmmoPocket:
+		return class'CHHelpers'.default.AmmoSlotBypassUniqueRule;
 	case eInvSlot_GrenadePocket:
-		return true;
+		return !class'CHHelpers'.default.GrenadeRespectUniqueRule;
+	// End Issue #171
 	default:
 		// Issue #118 Start
 		if (class'CHItemSlot'.static.SlotIsTemplated(Slot))

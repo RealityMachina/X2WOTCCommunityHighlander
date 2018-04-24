@@ -208,7 +208,7 @@ struct native TUIGraphicsOptionSettingConfig
 };
 
 const NumGraphicsOptions = 15;
-const NUM_LISTITEMS = 16;
+const NUM_LISTITEMS = 16; 
 var TUIGraphicsOptionSettingConfig GraphicsOptions[NumGraphicsOptions];
 var byte GraphicsVals[NumGraphicsOptions];
 
@@ -1489,9 +1489,13 @@ function SetVideoTabSelected()
 //	local int i;
 	ResetMechaListItems();
 
+	// Issue #160, fix tooltips
+	RenableMechaListItems(ePCTabVideo_Max);
+
 	VideoTabMC = Movie.GetVariableObject(MCPath$".TabGroup.Tab1");
 	if(VideoTabMC != none)
 		VideoTabMC.ActionScriptVoid("select");
+
 		
 	// NOTE: Keeping the actual widgets of removed settings so that the remaining
 	//		 ones are still operational - KD
@@ -1533,7 +1537,6 @@ function SetVideoTabSelected()
 		m_arrMechaItems[i].Hide();
 		m_arrMechaItems[i].DisableNavigation();
 	}*/
-	RenableMechaListItems(ePCTabVideo_Max);
 }
 
 public function SpinnerUpdated(UIListItemSpinner spinnerControl, int direction)
@@ -1651,6 +1654,8 @@ function SetGraphicsTabSelected()
 	m_bApplyingPreset = true;
 
 	ResetMechaListItems();
+	// Issue #160, fix tooltips
+	RenableMechaListItems(ePCGraphics_Max);
 
 	for (i = 0; i < NumGraphicsOptions; i++)
 	{
@@ -1674,7 +1679,6 @@ function SetGraphicsTabSelected()
 		m_arrMechaItems[i].Hide();
 		m_arrMechaItems[i].DisableNavigation();
 	}*/
-	RenableMechaListItems(ePCGraphics_Max);
 }
 
 function SetAudioTabSelected()
@@ -1686,7 +1690,9 @@ function SetAudioTabSelected()
 	if(AudioTabMC != none)
 		AudioTabMC.ActionScriptVoid("select");
 		
-	//ResetMechaListItems();
+	ResetMechaListItems();
+	// Issue #160, fix tooltips
+	RenableMechaListItems(ePCTabAudio_Max);
 
 	// Master Volume: --------------------------------------------
 	m_arrMechaItems[ePCTabAudio_MasterVolume].UpdateDataSlider(m_strAudioLabel_MasterVolume, "", m_kProfileSettings.Data.m_iMasterVolume, , UpdateMasterVolume);
@@ -1739,7 +1745,6 @@ function SetAudioTabSelected()
 		m_arrMechaItems[i].Hide();
 		m_arrMechaItems[i].DisableNavigation();
 	}*/
-	RenableMechaListItems(ePCTabAudio_Max); 
 }
 
 function SetGameplayTabSelected()
@@ -1756,8 +1761,23 @@ function SetGameplayTabSelected()
 	local array<X2DownloadableContentInfo> DLCInfos;
 	local int DLCInfoIndex;
 	local GFxObject GameplayTabMC;
-	
+
+	// Issue #155 Start
+	// Also #160, move this code up so that we can make the tooltips work
+	PartTemplateManager = class'X2BodyPartTemplateManager'.static.GetBodyPartTemplateManager();
+	PartPackNames = PartTemplateManager.GetPartPackNames();
+
+	// filter out forced 100% packs
+	for (Index = PartPackNames.Length; Index > 0; Index--)
+	{
+		if (class'CHHelpers'.default.CosmeticDLCNamesUnaffectedByRoll.Find(PartPackNames[Index]) != INDEX_NONE)
+		{
+			PartPackNames.Remove(Index, 1);
+		}
+	}
 	ResetMechaListItems();
+	RenableMechaListItems(ePCTabGameplay_Max + PartPackNames.Length - 1);
+	// Issue #155, #160 End
 	
 	GameplayTabMC = Movie.GetVariableObject(MCPath$".TabGroup.Tab3");
 	if(GameplayTabMC != none)
@@ -1784,13 +1804,9 @@ function SetGameplayTabSelected()
 	DLCInfos = `ONLINEEVENTMGR.GetDLCInfos(false);	
 
 	SliderMapping.Length = 0;
-	PartTemplateManager = class'X2BodyPartTemplateManager'.static.GetBodyPartTemplateManager();
-	PartPackNames = PartTemplateManager.GetPartPackNames();
-
-	RenableMechaListItems(ePCTabGameplay_Max + PartPackNames.Length - 1);
 
 	for(Index = 1; Index < PartPackNames.Length; ++Index) //There will always be a NULL entry at the beginning of the list
-	{		
+	{
 		PartPackPresetIndex = m_kProfileSettings.Data.PartPackPresets.Find('PartPackName', PartPackNames[Index]);
 		if(PartPackPresetIndex == INDEX_NONE)
 		{
@@ -3107,30 +3123,61 @@ simulated function AS_SetTabData( string title0, string title1, string title2, s
 	Movie.ActionScriptVoid(MCPath$".SetTabData");
 }
 
+//issue #160 - lists are now dynamically built and disabled according to what the lists say: we ignore the NUM_LISTITEMS const, in other words.
 function ResetMechaListItems()
 {
 	local int i;
-	for( i = 0; i < NUM_LISTITEMS; i++ )
+	local UIMechaListItem ListItem;
+	
+	List.ClearItems();
+	m_arrMechaItems.Length = 0; //destroy the whole list after clearing it
+	for(i=0; i < NUM_LISTITEMS; ++i)
 	{
-		m_arrMechaItems[i].SetDisabled(false);
-		m_arrMechaItems[i].OnLoseFocus();
-		m_arrMechaItems[i].Hide();
-		m_arrMechaItems[i].BG.RemoveTooltip();
-		m_arrMechaItems[i].DisableNavigation();
+		ListItem = Spawn(class'UIMechaListItem', List.ItemContainer );	
+		ListItem.bAnimateOnInit = false;
+		ListItem.InitListItem();
+		ListItem.SetY(i * class'UIMechaListItem'.default.Height);
+		ListItem.OnMouseEventDelegate = DetailItemMouseEvent;
+		ListItem.SetDisabled(false);
+		ListItem.OnLoseFocus();
+		ListItem.Hide();
+		ListItem.BG.RemoveTooltip();
+		ListItem.DisableNavigation();
+		m_arrMechaItems.AddItem(ListItem);
+
 	}
+	
 	List.SetSelectedIndex(-1);
 }
 
 function RenableMechaListItems(int maxItems)
 {
 	local int i;
-	for( i = 0; i < maxItems; i++)
+	local UIMechaListItem ListItem;
+
+	// Issue #160: FIRST, enable navigation on the existing items, so the navigator properly tracks the items
+	for (i = 0; i < maxItems; i++)
 	{
 		m_arrMechaItems[i].SetDisabled(false); //This will be reset in the tab info update for each mechalistitem.
 		m_arrMechaItems[i].Show();
 		m_arrMechaItems[i].EnableNavigation();
 	}
-	for( i = maxItems; i < NUM_LISTITEMS; i++ )
+
+	// Then, spawn any additional items we may need
+	if (maxItems > NUM_LISTITEMS) //our initial list made is 16 items long, if a function gives us more than this...
+	{
+		for(i = NUM_LISTITEMS; i < maxItems; i++)
+		{
+			ListItem = Spawn(class'UIMechaListItem', List.ItemContainer );	
+			ListItem.bAnimateOnInit = false;
+			ListItem.InitListItem();
+			ListItem.SetY(i * class'UIMechaListItem'.default.Height);
+			ListItem.OnMouseEventDelegate = DetailItemMouseEvent;
+			m_arrMechaItems.AddItem(ListItem);
+		}		
+	}
+	// And finally, disable any extraneous ones
+	for (i = maxItems; i < m_arrMechaItems.Length; i++) //disable any extraneous options we don't need on startup, this is for when the menu is first opened.
 	{
 		m_arrMechaItems[i].SetDisabled(false);
 		m_arrMechaItems[i].OnLoseFocus();
@@ -3138,8 +3185,14 @@ function RenableMechaListItems(int maxItems)
 		m_arrMechaItems[i].BG.RemoveTooltip();
 		m_arrMechaItems[i].DisableNavigation();
 	}
+
+	// Also set the list size to a good value: Flash overrides it with the default
+	// from the movie, so we can't do it in OnInit()
+	List.SetHeight(class'UIMechaListItem'.default.Height * NUM_LISTITEMS);
+
 	Navigator.SetSelected(List);
 }
+//end issue #160
 
 //==============================================================================
 //		CLEANUP:
